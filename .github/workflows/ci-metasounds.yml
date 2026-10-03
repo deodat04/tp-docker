@@ -1,0 +1,56 @@
+# ============================================================
+# CI = Continuous Integration  ->  "build + test"
+# Responsabilité : vérifier le code et PRODUIRE l'image Docker.
+# Elle ne déploie RIEN (ça, c'est le rôle de la CD).
+# ============================================================
+name: CI
+
+# Déclencheur : chaque "git push" sur main et chaque Pull Request
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Nom complet de l'image dans Artifact Registry
+  IMAGE: europe-west1-docker.pkg.dev/cs-poc-hpzdycpiqjyvinhrczvlwcn/metasounds-derrick/metasounds
+
+jobs:
+  build-test-push:
+    runs-on: ubuntu-latest   # le "runner" de ton schéma : une machine jetable fournie par GitHub
+
+    steps:
+      # 1. Récupère le code du repo sur le runner (sinon il est vide)
+      - uses: actions/checkout@v4
+
+      # 2. Installe Python 3.11 (même version que la VM et le Dockerfile)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3. TEST : installe les dépendances puis lance les tests.
+      #    Si un test échoue -> le job s'arrête -> aucune image n'est poussée.
+      - name: Tests
+        run: |
+          pip install -r requirements.txt pytest
+          pytest
+
+      # 4. AUTH : se connecte au registry avec le Service Account.
+      #    "_json_key" = nom d'utilisateur spécial qui signifie "le mot de passe est une clé JSON".
+      #    La clé vient d'un SECRET GitHub, jamais écrite dans le repo.
+      - name: Login Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: europe-west1-docker.pkg.dev
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
+
+      # 5. BUILD : construit l'image à partir du Dockerfile.
+      #    Le tag = identifiant du commit (sha) -> on sait toujours quel code est dans quelle image.
+      - name: Docker build
+        run: docker build -t $IMAGE:${{ github.sha }} .
+
+      # 6. PUSH : envoie l'image dans le registry (uniquement depuis main, pas depuis une PR)
+      - name: Docker push
+        if: github.ref == 'refs/heads/main'
+        run: docker push $IMAGE:${{ github.sha }}
