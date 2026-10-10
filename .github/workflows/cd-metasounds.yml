@@ -36,7 +36,7 @@ jobs:
         with:
           host: ${{ secrets.GCP_VM_IP }}          # IP de la VM de cet environnement
           username: derrick
-          key: ${{ secrets.GCP_SA_KEY }}        # clé privée SSH (secret)
+          key: ${{ secrets.GCP_SA_KEY }}        # clé privée SSH (soit derrick_id_rsa)
           script: |
             # Autorise Docker (sur la VM) à lire Artifact Registry
             gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
