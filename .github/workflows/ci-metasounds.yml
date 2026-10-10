@@ -50,7 +50,19 @@ jobs:
       - name: Docker build
         run: docker build -t $IMAGE:${{ github.sha }} .
 
-      # 6. PUSH : envoie l'image dans le registry (uniquement depuis main, pas depuis une PR)
+      # 6. SCAN SÉCURITÉ : Trivy analyse l'image (OS + paquets Python) à la recherche
+      #    de vulnérabilités connues (CVE). Il scanne l'image LOCALE, donc avant le push.
+      #    exit-code 1 -> si une faille CRITICAL/HIGH est trouvée, le job échoue
+      #    -> l'étape de push ne s'exécute pas -> l'image n'atteint jamais le registry.
+      - name: Scan Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          severity: CRITICAL,HIGH     # on ignore LOW/MEDIUM pour rester lisible
+          ignore-unfixed: true        # ignore les failles sans correctif disponible (on n'y peut rien)
+          exit-code: "1"              # "0" = rapport seulement, sans bloquer
+
+      # 7. PUSH : envoie l'image dans le registry (uniquement depuis main, pas depuis une PR)
       - name: Docker push
         if: github.ref == 'refs/heads/main'
         run: docker push $IMAGE:${{ github.sha }}
