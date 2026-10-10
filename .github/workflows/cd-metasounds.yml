@@ -1,12 +1,18 @@
 # ============================================================
-# CD = Continuous Deployment  ->  DEV -> PREPROD -> PROD
-# Responsabilité : prendre une image DÉJÀ construite (par la CI)
-# et la faire tourner sur un environnement. Ici : AUCUN build.
+# CD = Continuous Deployment  ->  DEV (auto) -> PREPROD / PROD (manuel)
+# Responsabilité : prendre une image DÉJÀ construite par la CI
+# et la faire tourner sur un environnement. AUCUN build ici.
 # ============================================================
 name: CD
 
-# Lancement manuel : tu choisis QUOI déployer (tag) et OÙ (environnement)
 on:
+  # AUTOMATIQUE : se déclenche quand le workflow "CI" se termine (sur main)
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+  # MANUEL : pour promouvoir une version vers preprod / prod (ou rejouer dev)
   workflow_dispatch:
     inputs:
       environment:
@@ -18,34 +24,29 @@ on:
         required: true
 
 env:
-  IMAGE: europe-west1-docker.pkg.dev/cs-poc-hpzdycpiqjyvinhrczvlwcn/metasounds-derrick/metasounds:${{ inputs.tag }}
+  # Tag : celui saisi à la main, sinon le sha du commit que la CI vient de construire
+  IMAGE: europe-west1-docker.pkg.dev/cs-poc-hpzdycpiqjyvinhrczvlwcn/metasounds-derrick/metasounds:${{ inputs.tag || github.event.workflow_run.head_sha }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    # Lie le job à un "Environment" GitHub (Settings > Environments).
-    # Chaque environnement a ses propres secrets (VM_HOST...) et ses règles
-    # (ex : validation manuelle obligatoire avant prod).
-    environment: ${{ inputs.environment }}
+    # On ne déploie automatiquement que si la CI a RÉUSSI.
+    # Un lancement manuel (workflow_dispatch) passe toujours.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+
+    # Manuel -> l'environnement choisi. Automatique -> toujours "dev".
+    environment: ${{ inputs.environment || 'dev' }}
 
     steps:
-      # Le runner se connecte en SSH à la VM, puis exécute les commandes DESSUS.
       - name: Déploiement sur la VM
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.GCP_VM_IP }}          # IP de la VM de cet environnement
+          host: ${{ secrets.GCP_VM_IP }}
           username: derrick
-          key: ${{ secrets.GCP_SA_KEY }}        # clé privée SSH (soit derrick_id_rsa)
+          key: ${{ secrets.GCP_VM_SSH_KEY }}
           script: |
-            # Autorise Docker (sur la VM) à lire Artifact Registry
             gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
-
-            # PULL : télécharge l'image depuis le registry
             docker pull ${{ env.IMAGE }}
-
-            # Supprime l'ancien conteneur s'il existe (|| true = pas d'erreur sinon)
             docker rm -f metasounds || true
-
-            # RUN : lance la nouvelle version en arrière-plan.
             docker run -p 80:8080 -d --name metasounds ${{ env.IMAGE }}
